@@ -8,7 +8,7 @@ Currently contains two tools:
 
 + [merge.py](merge.py) Downloads and merges .m files of you and your ally and creates an html index with archive. 
   Uses the m/h file merger from https://github.com/tupelo-schneck/stars  (thanks!)
-  I run it in a cron job outputting to a password protected public html folder. 
+  I run it in a cron job outputting to a password protected public html folder (so the new merged .m file is automatically available when a new turn is in).
 + [fuel.py](fuel.py) Calculate fuel usage and booster requirements for a given trip, including slowing down and AR decay. 
 
 Neither of them is meant to be generally useful and a lot of stuff is hard coded. 
