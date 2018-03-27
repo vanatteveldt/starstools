@@ -60,15 +60,15 @@ def fleet(*ships):
                 fuel_prod=sum(s.fuel_prod for s in ships),
                 col=any(s.col for s in ships))
         
-def get_time(distance):
-    d = args.max_warp**2
+def get_time(distance, max_warp=9):
+    d = max_warp**2
     time = int(distance) // d
     remainder = distance - (time * d)
     if remainder >= 1: time += 1
     return time
 
-def get_warp(distance):
-    time = get_time(distance)
+def get_warp(distance, max_warp=9):
+    time = get_time(distance, max_warp=max_warp)
     if args.ce and distance >= 82:
         # prefer ending with a warp 6 jump
         time2 = get_time(distance - 36)
@@ -94,8 +94,54 @@ def get_is_pop(cap, turns):
     
     return result
     
+def go(flt, distance, nboosters, maxwarp=9, verbose=False):
+    log=print if verbose else lambda *x: None
+    booster = locals()[args.booster] if args.booster else (ftrans if args.inner else scout)
 
-#mf = Ship("Medium Freighter", 700, 69, 210)
+    f = fleet(flt, *[booster] * nboosters)
+    fuelstart = f.fuel
+    log("\nTrying {nboosters} {booster} boosters: {f}".format(**locals()))
+    warps = []
+
+    if args.inner:
+        turns = time - (0 if flt.col else 1)
+        if turns:
+            f.pop = get_is_pop(flt.pop, turns)
+        print("IS pop to board", flt.pop, flt.col and " (Colonizers, so full on arrival)" or " (Freighters, so full turn before arrival)")
+
+    while distance >= 1:
+        w = get_warp(distance, max_warp=maxwarp)
+        warps.append(w)
+        travel = min(distance, w**2)
+        distance = max(0, distance - w**2)
+        if distance < 1:
+            travel += distance
+            distance = 0
+        f.move(w, travel)
+        if f.fuel < 0:
+            print("Fleet ran out of fuel, try with more boosters...")
+            return
+
+
+        print("Moved {travel:1.2f} at warp {w}, {f}, distance to go: {distance:1.2f}"
+              .format(**locals()))
+        if distance >= 1:
+            # can we send boosters home?
+            continue # todo, duh :)
+            booster_fuel = sum(consumption(booster.weight, wr**2, wr) for wr in warps)
+            
+            consumed = fuelstart - f.fuel
+            nover = min(nboostersleft, consumed // (booster.fuel - booster_fuel))
+            booster_fuel *= nover
+            if nover and not booster.fuel_prod:
+                f.fuel -= booster_fuel
+                f.weight -= nover * booster.weight
+                nboostersleft -= nover
+                print("{nover} boosters leave with {booster_fuel} fuel, left: {f}".format(**locals()))
+    return warps
+
+
+mf = Ship("Medium Freighter", 700, 63, 210)
 #col = Ship("Colonizer", 200, 76, 25, col=True)
 scout = Ship("Scout", 300, 11, 0)
 #dxboost = Ship("DD Booster (XRay)", 780, 44, 0)
@@ -121,7 +167,6 @@ if __name__ == '__main__':
     parser.add_argument('--fuel',  type=int, default=0, help="Specify fuel")
     parser.add_argument('--ce',  action='store_true', help="Cheap engine, i.e. prefer warp <=6 jump")
     parser.add_argument('--booster', help="Choose booster (e.g. scout, dxboost)")
-    parser.add_argument('--max-warp', "-w", help="Max warp", type=int, default=9)
     
     args = parser.parse_args()
 
@@ -137,8 +182,6 @@ if __name__ == '__main__':
         flt = fleet(flt, *([ship]*n))
 
     flt.cap = flt.cargo
-
-    booster = locals()[args.booster] if args.booster else (ftrans if args.inner else scout)
 
     time = get_time(distance)
     if args.col:
@@ -159,44 +202,16 @@ if __name__ == '__main__':
 
     print("Moving {distance} ly in {time} turns with {flt}".format(**locals()))
 
-    for nboosters in itertools.count():
-        f = fleet(flt, *[booster] * nboosters)
-        fuelstart = f.fuel
-        nboostersleft = nboosters
-        print("\nTrying {nboosters} {booster} boosters: {f}".format(**locals()))
-        warps = []
-        d = distance
-
-        while d >= 1:
-            w = get_warp(d)
-            warps.append(w)
-            travel = min(d, w**2)
-            d = max(0, d - w**2)
-            if d < 1:
-                travel += d
-                d = 0
-            f.move(w, travel)
-            if f.fuel < 0:
-                print("Fleet ran out of fuel, trying with more boosters...")
+    prev_nbooster = None
+    for maxwarp in [9,8,7]:
+        for nboosters in itertools.count():
+            warps = go(flt, distance, nboosters, maxwarp)
+            if warps:
+                if (prev_nbooster is not None) and nboosters >= prev_nbooster:
+                    print("Warp ", maxwarp, "doesn't help, sorry")
+                else:
+                    print("Made it!", nboosters, maxwarp, warps)
+                prev_nbooster = nboosters
                 break
-
-
-            print("Moved {travel:1.2f} at warp {w}, {f}, distance to go: {d:1.2f}"
-                  .format(**locals()))
-            if d >= 1:
-                # can we send boosters home?
-                booster_fuel = sum(consumption(booster.weight, wr**2, wr) for wr in warps)
-                consumed = fuelstart - f.fuel
-                nover = min(nboostersleft, consumed // (booster.fuel - booster_fuel))
-                booster_fuel *= nover
-                if nover and not booster.fuel_prod:
-                    f.fuel -= booster_fuel
-                    f.weight -= nover * booster.weight
-                    nboostersleft -= nover
-                    print("{nover} boosters leave with {booster_fuel} fuel, left: {f}".format(**locals()))
-
-        if f.fuel >= 0:
-            break
-
-    print("\nArrived! {} boosters, jumps: {}, fuel consumed {}, left {}"
-          .format(nboosters, warps, fuelstart - f.fuel, f.fuel))
+        
+    
