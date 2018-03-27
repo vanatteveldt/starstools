@@ -13,49 +13,63 @@ import argparse
 import re
 
 # fuel mizer efficiency
-engine = {5: .35, 6:1.20, 7:1.75, 8:2.35, 9:3.60, 10:4.20}
+# from: view-source:http://craebild.dk/hab_range_tool/fuelusage.html
+engines = {'mizer': {'weight': 6, 'eff': [0, 0, 0, 0, .35, 1.20, 1.75, 2.35, 3.60, 4.20]},
+           'radram': {'weight': 10, 'eff': [0, 0, 0, 0, 0  , 0   , 1.65, 3.75, 6.00, 7.20]},
+          }
 
-def consumption(weight, distance, warp, ife=0.85):
+def consumption(weight, distance, warp):
     if distance < (warp ** 2):
         distance = math.ceil(distance)
     else:
         distance = int(distance)
-    return int(math.ceil(weight * distance * engine.get(warp,0) * ife / 200))
+    eff = engines[args.engine]['eff'][int(warp)-1] * (1 if args.noife else 0.85)
+    return int(math.ceil(weight * distance * eff / 200))
 
 class Ship:
-    def __init__(self, name, fuel, weight, cargo, pop=0, fuel_prod=0):
+    def __init__(self, name, fuel, weight, cargo, cap=None, pop=0, fuel_prod=0, col=False, nengines=1):
         self.name = name
         self.fuel = fuel
         self.weight = weight
         self.cargo=cargo
         self.pop=pop
         self.fuel_prod=fuel_prod
+        self.cap=(cargo + pop if cap is None else cap)
+        self.col = col
+        self.nengines=nengines
     def __str__(self):
-        return "[{name}: fuel={fuel:4d}, wt={weight}, pop={pop}, cargo={cargo}]".format(**self.__dict__)
+        return "[{name}: fuel={fuel:4d}, wt={weight}, pop={pop}, cargo={cargo}, cap={cap}, col={col}, fuel_prod={fuel_prod}]".format(**self.__dict__)
     def move(self, warp, distance):
         if args.ar:
             losses = int(self.pop * .03)
             self.pop -= losses
-        self.fuel -= consumption(self.weight + self.cargo + self.pop, distance, warp) + self.fuel_prod
+        self.fuel -= consumption(self.weight + self.cargo + self.pop, distance, warp)
+        self.fuel += self.fuel_prod
+        if args.inner:
+            self.pop=grow_is(self.pop, self.cap - self.cargo)
+            
 
-        
+
 def fleet(*ships):
-    return Ship("Fleet", sum(s.fuel for s in ships),
-                sum(s.weight for s in ships),
-                sum(s.cargo for s in ships),
-                sum(s.pop for s in ships),
-                fuel_prod=sum(s.fuel_prod for s in ships))
+    return Ship("Fleet",
+                fuel=sum(s.fuel for s in ships),
+                weight=sum(s.weight for s in ships),
+                cargo=sum(s.cargo for s in ships),
+                pop=sum(s.pop for s in ships),
+                cap=sum(s.cap for s in ships),
+                fuel_prod=sum(s.fuel_prod for s in ships),
+                col=any(s.col for s in ships))
         
-def get_time(distance, max_warp=9):
-    d = max_warp**2
+def get_time(distance):
+    d = args.max_warp**2
     time = int(distance) // d
     remainder = distance - (time * d)
     if remainder >= 1: time += 1
     return time
 
-def get_warp(distance, max_warp=9, ce=False):
-    time = get_time(distance, max_warp)
-    if ce and distance >= 82:
+def get_warp(distance):
+    time = get_time(distance)
+    if args.ce and distance >= 82:
         # prefer ending with a warp 6 jump
         time2 = get_time(distance - 36)
         if time2 + 1 == time:
@@ -65,17 +79,31 @@ def get_warp(distance, max_warp=9, ce=False):
     maxwarp = math.ceil((int(distance) / time)**.5)
     return min(maxwarp, math.ceil(int(distance)**.5))
 
-mf = Ship("Medium Freighter", 700, 69, 210)
-lf = Ship("Large Freighter", 3100, 143, 1200)
-hmf = Ship("Heavy Medium Freighter", 450, 71, 260)
-ccol = Ship("Cheap Colonizer", 200, 26, 25)
-col = Ship("Colonizer", 200, 76, 25)
-scout = Ship("Scout", 300, 19, 0)
-dxboost = Ship("DD Booster (XRay)", 780, 44, 0)
-sfx = Ship("Super Fuel Export", 2250, 123, 0, fuel_prod=200) 
+def grow_is(pop, cap, nturns=1):
+    gr = int(args.inner/2) / 100.
+    pop += int(pop * gr)
+    if nturns > 1:
+        pop = grow_is(pop, cap, nturns=nturns-1)
+    return min(pop, cap)
 
-fcol = Ship("Privateer colonizer", 1150, 109, 250)
-ffr = Ship("Privateer freighter", 1400, 80, 250)
+def get_is_pop(cap, turns):
+    growth = 1 + int(args.inner/2)/100.
+    result = int(cap / growth**turns)
+    while grow_is(result, cap, turns) < cap:
+        result += 1
+    
+    return result
+    
+
+#mf = Ship("Medium Freighter", 700, 69, 210)
+#col = Ship("Colonizer", 200, 76, 25, col=True)
+scout = Ship("Scout", 300, 11, 0)
+#dxboost = Ship("DD Booster (XRay)", 780, 44, 0)
+#sfx = Ship("Super Fuel Export", 2250, 123, 0, fuel_prod=200, engines=2)
+ftrans = Ship("Fuel Transport", 750, 12, 0, fuel_prod=200) 
+
+pcol = Ship("Privateer colonizer", 1150, 103, 250, col=True)
+pfr = Ship("Privateer freighter", 1400, 74, 250)
 
 if __name__ == '__main__':
     
@@ -84,13 +112,18 @@ if __name__ == '__main__':
     parser.add_argument('distance', type=float)
     parser.add_argument('ships', nargs='+')
     parser.add_argument('--ar', help="Carry AR Population", action='store_true')
+    parser.add_argument('--engine', help="Engine", default='mizer', choices=engines.keys())
+    parser.add_argument('--no-ife', help="No IFE", action='store_true', dest='noife')
+    parser.add_argument('--is', help="Carry IS Population (provide PGR)", default=20, dest='inner', type=int)
     parser.add_argument('--pop',  type=int, help="Amount of population, default=remainder")
+    parser.add_argument('--col', help="Set fleet to colonizing (i.e. IS full on arrival)", action='store_true')
     parser.add_argument('--cargo', type=int, default=0, help="Amount of other cargo, default=none")
     parser.add_argument('--fuel',  type=int, default=0, help="Specify fuel")
     parser.add_argument('--ce',  action='store_true', help="Cheap engine, i.e. prefer warp <=6 jump")
     parser.add_argument('--booster', help="Choose booster (e.g. scout, dxboost)")
+    parser.add_argument('--max-warp', "-w", help="Max warp", type=int, default=9)
+    
     args = parser.parse_args()
-    print(args)
 
     flt = fleet()
     distance = args.distance
@@ -99,25 +132,30 @@ if __name__ == '__main__':
         n, ship = m.groups()
         n = int(n) if n else 1
         ship = locals()[ship]
+        ship.weight += engines[args.engine]['weight'] * ship.nengines
         #print("Adding {n}x {ship}".format(**locals()))
         flt = fleet(flt, *([ship]*n))
 
-    cap = flt.cargo
+    flt.cap = flt.cargo
 
-    booster = locals()[args.booster] if args.booster else scout
-    
-    flt.cargo = min(cap, args.cargo)
-    flt.pop = cap - flt.cargo
-    if args.pop is not None:
-        flt.pop = min(flt.pop, args.pop)
-
-
-    if flt.pop == 25 and args.ar:
-        flt.pop = 22 # AR max without loss
-
-
+    booster = locals()[args.booster] if args.booster else (ftrans if args.inner else scout)
 
     time = get_time(distance)
+    if args.col:
+        flt.col = True
+    flt.cargo = min(flt.cap, args.cargo)
+    flt.pop = flt.cap - flt.cargo
+    if args.pop is None:
+        if flt.pop == 25 and args.ar:
+            flt.pop = 22 # AR max without loss
+        if args.inner:
+            turns = time - (0 if flt.col else 1)
+            if turns:
+                flt.pop = get_is_pop(flt.pop, turns)
+            print("IS pop to board", flt.pop, flt.col and " (Colonizers, so full on arrival)" or " (Freighters, so full turn before arrival)")
+    else:
+        flt.pop = min(flt.pop, args.pop)
+        
 
     print("Moving {distance} ly in {time} turns with {flt}".format(**locals()))
 
@@ -130,7 +168,7 @@ if __name__ == '__main__':
         d = distance
 
         while d >= 1:
-            w = get_warp(d, max_warp=9, ce=args.ce)
+            w = get_warp(d)
             warps.append(w)
             travel = min(d, w**2)
             d = max(0, d - w**2)
