@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """
 Simple utility for computing fuel requirements and boosters
 
@@ -11,11 +12,14 @@ import copy
 import sys
 import argparse
 import re
+import logging
 
 # fuel mizer efficiency
 # from: view-source:http://craebild.dk/hab_range_tool/fuelusage.html
 engines = {'mizer': {'weight': 6, 'eff': [0, 0, 0, 0, .35, 1.20, 1.75, 2.35, 3.60, 4.20]},
            'radram': {'weight': 10, 'eff': [0, 0, 0, 0, 0  , 0   , 1.65, 3.75, 6.00, 7.20]},
+           'lh6': {'weight': 9, 'eff': [0,.20,.60,1.00,1.00,1.05,4.50,7.50,9.00,10.80]},
+           'dll7': {'weight': 13, 'eff': [0,.20,.60,.70,1.00,1.00,1.10,6.00,7.50,9.00]},
           }
 
 def consumption(weight, distance, warp):
@@ -43,8 +47,10 @@ class Ship:
         if args.ar:
             losses = int(self.pop * .03)
             self.pop -= losses
-        self.fuel -= consumption(self.weight + self.cargo + self.pop, distance, warp)
-        self.fuel += self.fuel_prod
+        wt = self.weight + self.cargo + self.pop
+        fcon = consumption(wt, distance, warp)
+        #print("Moved {distance}@W{warp}, fuel use {fcon} out of {self.fuel} (weight:{wt})".format(**locals()))
+        self.fuel += self.fuel_prod - fcon
         if args.inner:
             self.pop=grow_is(self.pop, self.cap - self.cargo)
             
@@ -94,24 +100,21 @@ def get_is_pop(cap, turns):
     
     return result
     
-def go(flt, distance, nboosters, maxwarp=9, verbose=False):
-    log=print if verbose else lambda *x: None
-    booster = locals()[args.booster] if args.booster else (ftrans if args.inner else scout)
+def go(flt, distance, nboosters=0, maxwarp=9, indent=0):
+    log=lambda *x: print(" . "*indent, *x, sep='') if args.verbose and indent==0 else lambda *x: None
+    booster = getattr(Ships, args.booster) if args.booster else (Ships.ftrans if args.inner else Ships.scout)
 
     f = fleet(flt, *[booster] * nboosters)
     fuelstart = f.fuel
-    log("\nTrying {nboosters} {booster} boosters: {f}".format(**locals()))
+    if nboosters:
+        log("\nTrying {nboosters} {booster} boosters: {f}".format(**locals()))
     warps = []
-
-    if args.inner:
-        turns = time - (0 if flt.col else 1)
-        if turns:
-            f.pop = get_is_pop(flt.pop, turns)
-        print("IS pop to board", flt.pop, flt.col and " (Colonizers, so full on arrival)" or " (Freighters, so full turn before arrival)")
+    boosters = []
 
     while distance >= 1:
         w = get_warp(distance, max_warp=maxwarp)
         warps.append(w)
+        boosters.append(nboosters)
         travel = min(distance, w**2)
         distance = max(0, distance - w**2)
         if distance < 1:
@@ -119,37 +122,45 @@ def go(flt, distance, nboosters, maxwarp=9, verbose=False):
             distance = 0
         f.move(w, travel)
         if f.fuel < 0:
-            print("Fleet ran out of fuel, try with more boosters...")
-            return
+            log("Fleet ran out of fuel, try with more boosters...")
+            return None, None
 
 
-        print("Moved {travel:1.2f} at warp {w}, {f}, distance to go: {distance:1.2f}"
+        log("Moved {travel:1.2f} at warp {w}, {f}, distance to go: {distance:1.2f}"
               .format(**locals()))
-        if distance >= 1:
+        if distance >= 1 and nboosters > 1:
             # can we send boosters home?
-            continue # todo, duh :)
             booster_fuel = sum(consumption(booster.weight, wr**2, wr) for wr in warps)
-            
-            consumed = fuelstart - f.fuel
-            nover = min(nboostersleft, consumed // (booster.fuel - booster_fuel))
-            booster_fuel *= nover
-            if nover and not booster.fuel_prod:
-                f.fuel -= booster_fuel
-                f.weight -= nover * booster.weight
-                nboostersleft -= nover
-                print("{nover} boosters leave with {booster_fuel} fuel, left: {f}".format(**locals()))
-    return warps
+            for nover in range(nboosters - 1, 0, -1):
+                # can we send #nover boosters home?
+                f2 = fleet(f)
+                f2.fuel -= nover * booster_fuel
+                f2.weight -= nover * booster.weight
+                w,b =  go(f2, distance, maxwarp=maxwarp, indent=indent+1)
+                if w:
+                    nhome = nboosters - nover
+                    log("Only need ", nover, "boosters, sending ", nhome, " home")
+                    f.fuel -= nover * booster_fuel
+                    f.weight -= nover * booster.weight
+                    nboosters -= nover
+                    break
+                    #log("{nover} boosters leave with {booster_fuel} fuel, left: {f}".format(**locals()))
+    return warps, boosters
 
+class Ships:
+    mf = Ship("Medium Freighter", 700, 63, 210)
+    #col = Ship("Colonizer", 200, 76, 25, col=True)
+    scout = Ship("Scout", 300, 11, 0)
+    #dxboost = Ship("DD Booster (XRay)", 780, 44, 0)
+    ftrans = Ship("Fuel Transport", 750, 12, 0, fuel_prod=200) 
+    
+    pcol = Ship("Privateer colonizer", 1150, 103, 250, col=True)
+    pfr = Ship("Privateer freighter", 1400, 74, 250)
+    hpf = Ship("Heavy privateer freighter", 650, 80, 400)
+    mpf = Ship("Medium privateer freighter", 900, 80, 350)
 
-mf = Ship("Medium Freighter", 700, 63, 210)
-#col = Ship("Colonizer", 200, 76, 25, col=True)
-scout = Ship("Scout", 300, 11, 0)
-#dxboost = Ship("DD Booster (XRay)", 780, 44, 0)
-#sfx = Ship("Super Fuel Export", 2250, 123, 0, fuel_prod=200, engines=2)
-ftrans = Ship("Fuel Transport", 750, 12, 0, fuel_prod=200) 
-
-pcol = Ship("Privateer colonizer", 1150, 103, 250, col=True)
-pfr = Ship("Privateer freighter", 1400, 74, 250)
+    lf = Ship("Large Freighter", 3100, 131, 1200, nengines=2)
+    sfx = Ship("Super Fuel Export", 2250, 111, 0, fuel_prod=200, nengines=2)
 
 if __name__ == '__main__':
     
@@ -167,6 +178,8 @@ if __name__ == '__main__':
     parser.add_argument('--fuel',  type=int, default=0, help="Specify fuel")
     parser.add_argument('--ce',  action='store_true', help="Cheap engine, i.e. prefer warp <=6 jump")
     parser.add_argument('--booster', help="Choose booster (e.g. scout, dxboost)")
+    parser.add_argument('--verbose', action='store_true')
+    
     
     args = parser.parse_args()
 
@@ -176,14 +189,13 @@ if __name__ == '__main__':
         m = re.match(r"(\d*)(\w+)", ship)
         n, ship = m.groups()
         n = int(n) if n else 1
-        ship = locals()[ship]
+        ship = getattr(Ships, ship)
         ship.weight += engines[args.engine]['weight'] * ship.nengines
         #print("Adding {n}x {ship}".format(**locals()))
         flt = fleet(flt, *([ship]*n))
 
     flt.cap = flt.cargo
 
-    time = get_time(distance)
     if args.col:
         flt.col = True
     flt.cargo = min(flt.cap, args.cargo)
@@ -191,26 +203,35 @@ if __name__ == '__main__':
     if args.pop is None:
         if flt.pop == 25 and args.ar:
             flt.pop = 22 # AR max without loss
-        if args.inner:
-            turns = time - (0 if flt.col else 1)
-            if turns:
-                flt.pop = get_is_pop(flt.pop, turns)
-            print("IS pop to board", flt.pop, flt.col and " (Colonizers, so full on arrival)" or " (Freighters, so full turn before arrival)")
     else:
         flt.pop = min(flt.pop, args.pop)
         
 
-    print("Moving {distance} ly in {time} turns with {flt}".format(**locals()))
-
     prev_nbooster = None
+    if args.inner and not args.pop:
+        print("Computing IS pop",  flt.col and " (Colonizers, so full on arrival)" or " (Freighters, so full turn before arrival)")
     for maxwarp in [9,8,7]:
+        time = get_time(distance, max_warp=maxwarp)
+        f = fleet(flt)
+        if args.inner and not args.pop:
+            turns = time - (0 if flt.col else 1)
+            if turns:
+                ispop = get_is_pop(flt.pop, turns)
+                f.pop = ispop
+            else:
+                ispop = flt.pop
+                                
+        else:
+            ispop = None
+        
         for nboosters in itertools.count():
-            warps = go(flt, distance, nboosters, maxwarp)
+            if nboosters > 10:
+                print("Tried {nboosters} boosters at warp {maxwarp}, giving up".format(**locals()))
+                break
+            warps, boosters = go(f, distance, nboosters, maxwarp)
             if warps:
-                if (prev_nbooster is not None) and nboosters >= prev_nbooster:
-                    print("Warp ", maxwarp, "doesn't help, sorry")
-                else:
-                    print("Made it!", nboosters, maxwarp, warps)
+                if (prev_nbooster is None) or nboosters < prev_nbooster:
+                    print("Warps: ", warps, "Boosters:", boosters, "IS Pop", ispop)
                 prev_nbooster = nboosters
                 break
         
