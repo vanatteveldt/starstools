@@ -9,21 +9,16 @@ If you and your ally both run the tool you can also keep ik local.
 """
 
 
-import requests, re, sys, os, shutil, subprocess
-
-MERGE_TOOL = "/home/wva/stars/StarsFileMerger.jar"
+import requests, re, sys, os, shutil, subprocess, json
 
 tmpdir = "/tmp/merge"
 if not os.path.exists(tmpdir):
     os.mkdir(tmpdir)
     
-outdir = "/home/wva/stars/GAME"
-
-
 force = "-f" in sys.argv # ieuw!
 
-def get_year():
-    p = requests.get("https://starsautohost.org/games/GAME.htm")
+def get_year(game):
+    p = requests.get("https://starsautohost.org/games/{game}.htm".format(**locals()))
     p.raise_for_status()
 
     m = re.search(r"Playing&nbsp;Year: (\d{4})", p.text)
@@ -55,42 +50,44 @@ def cp(inf, outf):
     outf = os.path.join(outdir, outf)
     print("  ", inf, "->", outf)
     shutil.copyfile(inf, outf)
-        
-year = get_year()
+
+config_file = "merge_config.json"
+config = json.load(open(config_file))
+game = config["game"]
+players = {p["id"]: p for p in config["players"]}
+outdir = config["outdir"]
+MERGE_TOOL = config["jarfile"]
+
+player = list(players)[1]
+year = get_year(game)
 print("Current year:", year)
-fn_orig = os.path.join(outdir, "GAME_{year}.m1".format(**locals()))
+fn_orig = os.path.join(outdir, "{game}_{year}.m{player}".format(**locals()))
 if os.path.exists(fn_orig) and not force:
     print("{fn_orig} exists, nothing to do!".format(**locals()))
     sys.exit()
 
 
-# You need to edit the .m* and passwords here!
-    
-download_m("GAME.m1", PASSWORD1, os.path.join(tmpdir, "GAME.m1"))
-download_m("GAME.m4", PASSWORD4, os.path.join(tmpdir, "GAME.m4"))
 
-cp("GAME.m1", "GAME_orig.m1")
-cp("GAME.m1", "GAME_{year}_orig.m1".format(**locals()))
-cp("GAME.m4", "GAME_orig.m4")
-cp("GAME.m4", "GAME_{year}_orig.m4".format(**locals()))
+for player in players:
+    download_m("{game}.m{player}".format(**locals()), players[player]["pwd"], os.path.join(tmpdir, "{game}.m{player}".format(**locals())))
+    cp("{game}.m{player}".format(**locals()), "{game}_orig.m{player}".format(**locals()))
+    cp("{game}.m{player}".format(**locals()), "{game}_{year}_orig.m{player}".format(**locals()))
 
 print("Merging .m files")
-cmd = ["java", "-jar", MERGE_TOOL, "-m", "GAME.m1", "GAME.m4"]
+cmd = ["java", "-jar", MERGE_TOOL, "-m"] + ["{game}.m{player}".format(**locals()) for player in players]
 print(cmd)
 subprocess.check_call(cmd, cwd=tmpdir)
 
+for player in players:
+    cp("{game}.m{player}".format(**locals()), "{game}.m{player}".format(**locals()))
+    cp("{game}.m{player}".format(**locals()), "{game}_{year}.m{player}".format(**locals()))
 
-cp("GAME.m1", "GAME.m1")
-cp("GAME.m1", "GAME_{year}.m1".format(**locals()))
-cp("GAME.m4", "GAME.m4")
-cp("GAME.m4", "GAME_{year}.m4".format(**locals()))
-
-years = [int(m.group(1)) for m in [re.match(r"GAME_(\d+).m1", f) for f in os.listdir(outdir)] if m]
+years = [int(m.group(1)) for m in [re.match(r"{game}_(\d+).m{player}".format(**locals()), f) for f in os.listdir(outdir)] if m]
 print(years)
 
 def row(year):
-    fns = ["GAME_{year}{suffix}.m{p}".format(year=year, p=p, suffix=suffix)
-           for suffix in ["", "_orig"] for p in [1,4]]
+    fns = ["{game}_{year}{suffix}.m{p}".format(game=game, year=year, p=p, suffix=suffix)
+           for suffix in ["", "_orig"] for p in players]
     row = "".join('  <td><a href="{fn}">{fn}</a></td>\n'.format(fn=fn) for fn in fns)
     return "<tr>\n{row}</tr>\n".format(**locals())
                            
@@ -100,13 +97,14 @@ archive = "\n".join(row(year) for year in years)
 html = """
 <html>
 <body>
-<h1>GAME year {year}</h1>
+<h1>{game} year {year}</h1>
 <h2>Current files:</h2>
-<ul>
-  <li><a href='GAME.m1'>GAME.m1</a> (merged file)
-  <li><a href='GAME.m4'>GAME.m4</a> (merged file)
-  <li><a href='GAME_orig.m1'>GAME_orig.m1</a> (original)
-  <li><a href='GAME_orig.m4'>GAME_org.m4</a> (original)
+<ul>""".format(**locals())
+for player in players:
+    html += "  <li><a href='{game}.m{player}'>{game}.m{player}</a> (merged file)".format(**locals())
+for player in players:
+    html += "  <li><a href='{game}.m{player}'>{game}_orig.m{player}</a> (original file)".format(**locals())
+html += """
 </ul>
 <h2>Archive:</h2>
 <table border=1>

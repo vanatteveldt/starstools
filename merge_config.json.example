@@ -1,0 +1,6 @@
+{"game": "GAME",
+ "players": [{"id": 1, "pwd":  "****"},
+	     {"id": 2, "pwd":  "****"}],
+ "jarfile": "/path/to/StarsFileMerger.jar",
+ "outdir": "/path/to/outdir"
+}

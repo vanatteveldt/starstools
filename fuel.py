@@ -86,7 +86,7 @@ def get_warp(distance, max_warp=9):
     return min(maxwarp, math.ceil(int(distance)**.5))
 
 def grow_is(pop, cap, nturns=1):
-    gr = int(args.inner/2) / 100.
+    gr = args.inner / 200.
     pop += int(pop * gr)
     if nturns > 1:
         pop = grow_is(pop, cap, nturns=nturns-1)
@@ -149,7 +149,8 @@ def go(flt, distance, nboosters=0, maxwarp=9, indent=0):
 
 class Ships:
     mf = Ship("Medium Freighter", 700, 63, 210)
-    #col = Ship("Colonizer", 200, 76, 25, col=True)
+    hmf = Ship("Medium Freighter", 450, 65, 260)
+    col = Ship("Colonizer", 200, 52, 25, col=True)
     scout = Ship("Scout", 300, 11, 0)
     #dxboost = Ship("DD Booster (XRay)", 780, 44, 0)
     ftrans = Ship("Fuel Transport", 750, 12, 0, fuel_prod=200) 
@@ -171,7 +172,7 @@ if __name__ == '__main__':
     parser.add_argument('--ar', help="Carry AR Population", action='store_true')
     parser.add_argument('--engine', help="Engine", default='mizer', choices=engines.keys())
     parser.add_argument('--no-ife', help="No IFE", action='store_true', dest='noife')
-    parser.add_argument('--is', help="Carry IS Population (provide PGR)", default=20, dest='inner', type=int)
+    parser.add_argument('--is', help="Carry IS Population (provide PGR)", dest='inner', type=int)
     parser.add_argument('--pop',  type=int, help="Amount of population, default=remainder")
     parser.add_argument('--col', help="Set fleet to colonizing (i.e. IS full on arrival)", action='store_true')
     parser.add_argument('--cargo', type=int, default=0, help="Amount of other cargo, default=none")
